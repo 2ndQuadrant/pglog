@@ -5,6 +5,8 @@
 * PostgreSQL 9.3
 * `csvlog` in `log_destination`
 * `logging_collector = on`
+* `log_filename = 'postgresql.log'`
+
 
 == Overview
 
@@ -15,7 +17,7 @@ CREATE EXTENSION pglog;
 The extension is responsible for:
 
 ----
-CREATE SERVER pglog_server FOREIGN DATA WRAPPER pglog;
+CREATE SERVER pglog_server FOREIGN DATA WRAPPER pglog NO VALIDATOR;
 
 CREATE FOREIGN TABLE log
 (
@@ -51,6 +53,8 @@ CSV files contained in the `log_directory` and using the `log_filename` rules.
 
 == Initial limitations
 
+* Support for CSV log
+* No support for severity level data type (allows WHERE error_severity >= 'INFO')
 * No support for compressed files
 * No support for condition push down in WHERE queries
 * No support for ANALYSE

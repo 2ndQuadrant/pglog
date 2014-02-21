@@ -1,0 +1,5 @@
+# pglog extension
+comment = 'PostgreSQL log via SQL'
+default_version = '1.0'
+module_pathname = '$libdir/pglog'
+relocatable = true
