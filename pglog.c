@@ -20,19 +20,13 @@
 #include "commands/defrem.h"
 #include "commands/explain.h"
 #include "commands/vacuum.h"
-#include "dirent.h"
 #include "foreign/fdwapi.h"
 #include "foreign/foreign.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
-
-/* Maximum number of log files to be read */
-#define MAX_LOG_FILES 16
-
-/* Default log file name */
-#define DEFAULT_PGLOG_FILENAME "pg_log/postgresql.csv"
+#include "postmaster/syslogger.h"
 
 PG_MODULE_MAGIC;
 
@@ -73,6 +67,17 @@ pglog_handler(PG_FUNCTION_ARGS)
 	FdwRoutine *fdwroutine = makeNode(FdwRoutine);
 
 	elog(DEBUG1,"Entering function %s",__func__);
+
+	/* Check if logging_collector is on and CSV is enabled */
+	if (! Logging_collector || !strstr(Log_destination_string, "csvlog"))
+		ereport(ERROR,
+			(errcode(ERRCODE_FDW_INVALID_HANDLE),
+			errmsg("Cannot instantiate the 'pglog' extension handler"),
+			errhint("'pgxlog' requires you to set 'log_collector = on' and to add 'csvlog' to 'log_destination'")
+		));
+
+
+	/* Set handlers */
 	fdwroutine->GetForeignRelSize = pglogGetForeignRelSize;
 	fdwroutine->GetForeignPaths = pglogGetForeignPaths;
 	fdwroutine->GetForeignPlan = pglogGetForeignPlan;
@@ -96,12 +101,14 @@ pglogGetForeignRelSize(PlannerInfo *root,
 	PgLogPlanState *fdw_private;
 
 	elog(DEBUG1,"Entering function %s",__func__);
+
 	/*
-	 * Fetch options.  We only need filename at this point, but we might as
+	 * Fetch options.  We only need filenames at this point, but we might as
 	 * well get everything and not need to re-fetch it later in planning.
 	 */
 	fdw_private = (PgLogPlanState *) palloc(sizeof(PgLogPlanState));
-	fdw_private->filename = DEFAULT_PGLOG_FILENAME;
+	fdw_private->i = 0;
+	fdw_private->filenames = initLogFileNames();
 	baserel->fdw_private = (void *) fdw_private;
 
 	/* Estimate relation size */
@@ -200,11 +207,6 @@ pglogGetForeignPlan(PlannerInfo *root,
 static void
 pglogBeginForeignScan(ForeignScanState *node, int eflags)
 {
-	/*
-	DIR *dir;
-	struct dirent *file;
-	*/
-
 	ForeignScan *plan = (ForeignScan *) node->ss.ps.plan;
 	List	   *options;
 	CopyState	cstate;
@@ -212,20 +214,15 @@ pglogBeginForeignScan(ForeignScanState *node, int eflags)
 
 	elog(DEBUG1,"Entering function %s",__func__);
 
-	/* TODO
-	 *
-	 * Get log_directory setting
-	 * Get log_filename setting
-	 * Open log_directory and get the names of available CSV log files
-	 * Open the first file
-	 *
-	 */
-
 	/*
 	 * Do nothing in EXPLAIN (no ANALYZE) case.  node->fdw_state stays NULL.
 	 */
 	if (eflags & EXEC_FLAG_EXPLAIN_ONLY)
 		return;
+
+	/* Initialise the log file names structure */
+	festate = (PgLogExecutionState *) palloc(sizeof(PgLogExecutionState));
+	festate->filenames = initLogFileNames();
 
 	/* Forces CSV format */
 	options = list_make1(makeDefElem("format", (Node *) makeString("csv")));
@@ -236,9 +233,10 @@ pglogBeginForeignScan(ForeignScanState *node, int eflags)
 	/*
 	 * Create CopyState from FDW options.  We always acquire all columns, so
 	 * as to match the expected ScanTupleSlot signature.
+	 * Starts from the first file in the list.
 	 */
 	cstate = BeginCopyFrom(node->ss.ss_currentRelation,
-						   DEFAULT_PGLOG_FILENAME,
+						   festate->filenames[0],
 						   false,
 						   NIL,
 						   options);
@@ -247,8 +245,6 @@ pglogBeginForeignScan(ForeignScanState *node, int eflags)
 	 * Save state in node->fdw_state.  We must save enough information to call
 	 * BeginCopyFrom() again.
 	 */
-	festate = (PgLogExecutionState *) palloc(sizeof(PgLogExecutionState));
-	festate->filename = DEFAULT_PGLOG_FILENAME;
 	festate->cstate = cstate;
 
 	node->fdw_state = (void *) festate;
@@ -311,7 +307,7 @@ pglogReScanForeignScan(ForeignScanState *node)
 	EndCopyFrom(festate->cstate);
 
 	festate->cstate = BeginCopyFrom(node->ss.ss_currentRelation,
-									festate->filename,
+									festate->filenames[0],
 									false,
 									NIL,
 									NIL);

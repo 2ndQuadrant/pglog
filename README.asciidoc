@@ -5,7 +5,6 @@
 * PostgreSQL 9.3
 * `csvlog` in `log_destination`
 * `logging_collector = on`
-* `log_filename = 'postgresql.log'`
 
 
 == Overview
@@ -49,11 +48,13 @@ CREATE FOREIGN TABLE log
 ----
 
 The extension will map a foreign table, named `log`, to all the
-CSV files contained in the `log_directory` and using the `log_filename` rules.
+CSV files contained in the `log_directory` (having `.csv` extension)
 
 == Initial limitations
 
 * Support for CSV log
+* Support for up to 16 log files (it could be made higher or set on an option)
+* No support for ordering of log files (currently files are read as they are from `log_directory` with no particular order)
 * No support for severity level data type (allows WHERE error_severity >= 'INFO')
 * No support for compressed files
 * No support for condition push down in WHERE queries
@@ -61,6 +62,7 @@ CSV files contained in the `log_directory` and using the `log_filename` rules.
 * No support for date partitioning
 * No support for security (full control for superusers, limited to normal users
 footnote:[User control can be limited to string matching or current roles in the database server])
+* No support for current database only (so that pglog can be installed on every database and allow to view only messages for that database)
 
 == Links
 

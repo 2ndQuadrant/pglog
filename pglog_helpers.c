@@ -18,6 +18,9 @@
 
 #include "utils/rel.h"
 #include "access/sysattr.h"
+#include "postmaster/syslogger.h"
+#include "dirent.h"
+#include "storage/fd.h"
 
 /*
  * check_selective_binary_conversion
@@ -139,11 +142,13 @@ estimate_size(PlannerInfo *root, RelOptInfo *baserel,
 
 	elog(DEBUG1,"Entering function %s",__func__);
 
+	/* TODO: loop through any log file (currently uses only the first) */
+
 	/*
 	 * Get size of the file.  It might not be there at plan time, though, in
 	 * which case we have to use a default estimate.
 	 */
-	if (stat(fdw_private->filename, &stat_buf) < 0)
+	if (stat(fdw_private->filenames[0], &stat_buf) < 0)
 		stat_buf.st_size = 10 * BLCKSZ;
 
 	/*
@@ -234,4 +239,59 @@ estimate_costs(PlannerInfo *root, RelOptInfo *baserel,
 	cpu_per_tuple = cpu_tuple_cost * 10 + baserel->baserestrictcost.per_tuple;
 	run_cost += cpu_per_tuple * ntuples;
 	*total_cost = *startup_cost + run_cost;
+}
+
+/*
+ * Initialise the list of available log files within logging directory
+ *
+ * Results are returned as a char** value, dynamically created by the function
+ */
+char **
+initLogFileNames(void)
+{
+	char **filenames;
+	char *filename;
+	int dir_length;
+	int length;
+	int i;
+	DIR *dir;
+	struct dirent *de;
+
+	/* Initialises the file names structure */
+	filenames = (char **) palloc(sizeof(char *) * MAX_LOG_FILES);
+	for (i = 0; i < MAX_LOG_FILES; ++i)
+		filenames[i] = 0;
+
+	elog(DEBUG1,"Log directory: %s - filename: %s", Log_directory, Log_filename);
+
+	/* Open log directory */
+	dir = AllocateDir(Log_directory);
+	dir_length = strlen(Log_directory) + 1; /* consider slash too */
+	i = 0;
+	while ((de = ReadDir(dir, Log_directory)) != NULL)
+	{
+		elog(DEBUG1,"Found directory entry: %s", de->d_name);
+		/* Look for CSV files */
+		length = strlen(de->d_name);
+		if (length > 4 && (strcmp(de->d_name + (length - 4), ".csv") == 0))
+		{
+			elog(DEBUG1,"Found CSV log file: %s", de->d_name);
+			/* Allocate the file name */
+			length += dir_length + 1;
+			filename = (char *) palloc(length * sizeof(char));
+			snprintf (filename, length, "%s/%s", Log_directory, de->d_name);
+			/* Insert the file in the final array */
+			filenames[i++] = filename;
+		}
+
+		/* Maximum number of allowed log files reached */
+		if (i == MAX_LOG_FILES)
+			break;
+	}
+	FreeDir(dir);
+
+	/* TODO: sorting of entries based on time? */
+
+	return filenames;
+
 }

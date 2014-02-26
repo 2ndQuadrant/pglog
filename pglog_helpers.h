@@ -28,15 +28,13 @@
 /* Maximum number of log files to be read */
 #define MAX_LOG_FILES 16
 
-/* Default log file name */
-#define DEFAULT_PGLOG_FILENAME "pg_log/postgresql.csv"
-
 /*
  * FDW-specific information for RelOptInfo.fdw_private.
  */
 typedef struct pglogPlanState
 {
-	char *filename; /* log files to be read */
+	char **filenames; /* log file names */
+	int i; /* log file index */
 	BlockNumber pages; /* estimate of file's physical size */
 	double ntuples; /* estimate of number of rows in file */
 } PgLogPlanState;
@@ -46,7 +44,8 @@ typedef struct pglogPlanState
  */
 typedef struct pglogExecutionState
 {
-	char *filename; /* log files to be read */
+	char **filenames; /* log file names */
+	int i; /* log file index */
 	CopyState cstate; /* state of reading file */
 } PgLogExecutionState;
 
@@ -61,5 +60,6 @@ void estimate_size(PlannerInfo *root, RelOptInfo *baserel,
 void estimate_costs(PlannerInfo *root, RelOptInfo *baserel,
 			   PgLogPlanState *fdw_private,
 			   Cost *startup_cost, Cost *total_cost);
+char **initLogFileNames(void);
 
 #endif
