@@ -295,3 +295,44 @@ initLogFileNames(void)
 	return filenames;
 
 }
+
+/* Start to read the next log file */
+void
+BeginNextCopy(Relation rel, PgLogExecutionState *state)
+{
+	MemoryContext oldcontext;
+	oldcontext = MemoryContextSwitchTo(state->scan_cxt);
+
+	if (state->cstate) {
+		EndCopyFrom(state->cstate);
+	}
+	elog(DEBUG1,"Opening log file: %s", state->filenames[state->i]);
+	state->cstate = BeginCopyFrom(rel,
+		state->filenames[state->i],
+		false,
+		NIL,
+		state->options);
+
+	MemoryContextSwitchTo(oldcontext);
+}
+
+/* Get the next log line */
+bool
+GetNextRow(Relation rel, PgLogExecutionState *state, TupleTableSlot* slot)
+{
+	return NextCopyFrom(state->cstate, NULL,
+		slot->tts_values, slot->tts_isnull,
+		NULL);
+}
+
+/* Is the last log file to be read? */
+bool
+isLastLogFile(PgLogExecutionState* state)
+{
+	elog(DEBUG1, "i: %d", state->i);
+	if (state->i < (MAX_LOG_FILES -1)
+		&& state->filenames[state->i + 1])
+			return false;
+
+	return true;
+}

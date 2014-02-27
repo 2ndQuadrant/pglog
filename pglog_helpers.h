@@ -47,6 +47,8 @@ typedef struct pglogExecutionState
 	char **filenames; /* log file names */
 	int i; /* log file index */
 	CopyState cstate; /* state of reading file */
+	List *options; /* options (mainly for COPY) */
+	MemoryContext scan_cxt; /* context for per-scan lifespan data */
 } PgLogExecutionState;
 
 /*
@@ -61,5 +63,9 @@ void estimate_costs(PlannerInfo *root, RelOptInfo *baserel,
 			   PgLogPlanState *fdw_private,
 			   Cost *startup_cost, Cost *total_cost);
 char **initLogFileNames(void);
+
+void BeginNextCopy(Relation rel, PgLogExecutionState* state);
+bool isLastLogFile(PgLogExecutionState* state);
+bool GetNextRow(Relation rel, PgLogExecutionState *state, TupleTableSlot* slot);
 
 #endif

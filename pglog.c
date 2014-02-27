@@ -208,8 +208,6 @@ static void
 pglogBeginForeignScan(ForeignScanState *node, int eflags)
 {
 	ForeignScan *plan = (ForeignScan *) node->ss.ps.plan;
-	List	   *options;
-	CopyState	cstate;
 	PgLogExecutionState *festate;
 
 	elog(DEBUG1,"Entering function %s",__func__);
@@ -220,32 +218,33 @@ pglogBeginForeignScan(ForeignScanState *node, int eflags)
 	if (eflags & EXEC_FLAG_EXPLAIN_ONLY)
 		return;
 
-	/* Initialise the log file names structure */
+	/* Initialise the execution state */
 	festate = (PgLogExecutionState *) palloc(sizeof(PgLogExecutionState));
 	festate->filenames = initLogFileNames();
+	festate->i = 0;
 
 	/* Forces CSV format */
-	options = list_make1(makeDefElem("format", (Node *) makeString("csv")));
+	festate->options = list_make1(makeDefElem("format", (Node *) makeString("csv")));
 
 	/* Add any options from the plan (currently only convert_selectively) */
-	options = list_concat(options, plan->fdw_private);
+	festate->options = list_concat(festate->options, plan->fdw_private);
+
+	/* Remember scan memory context */
+	festate->scan_cxt = CurrentMemoryContext;
 
 	/*
 	 * Create CopyState from FDW options.  We always acquire all columns, so
 	 * as to match the expected ScanTupleSlot signature.
 	 * Starts from the first file in the list.
 	 */
-	cstate = BeginCopyFrom(node->ss.ss_currentRelation,
-						   festate->filenames[0],
-						   false,
-						   NIL,
-						   options);
+	festate->cstate = NULL;
+	BeginNextCopy(node->ss.ss_currentRelation, festate);
+	elog(DEBUG1,"Copy state %p",festate->cstate);
 
 	/*
 	 * Save state in node->fdw_state.  We must save enough information to call
 	 * BeginCopyFrom() again.
 	 */
-	festate->cstate = cstate;
 
 	node->fdw_state = (void *) festate;
 }
@@ -282,11 +281,21 @@ pglogIterateForeignScan(ForeignScanState *node)
 	 * foreign tables.
 	 */
 	ExecClearTuple(slot);
-	found = NextCopyFrom(festate->cstate, NULL,
-						 slot->tts_values, slot->tts_isnull,
-						 NULL);
+	found = GetNextRow(node->ss.ss_currentRelation, festate, slot);
 	if (found)
 		ExecStoreVirtualTuple(slot);
+	else if (! isLastLogFile(festate))
+	{
+		/* We could have reached the end of a log file
+		 * We might have to start reading from the next
+		 */
+		elog(DEBUG1,"Reached end of file %s",festate->filenames[festate->i]);
+		festate->i++;
+		BeginNextCopy(node->ss.ss_currentRelation, festate);
+		found = GetNextRow(node->ss.ss_currentRelation, festate, slot);
+		if (found)
+			ExecStoreVirtualTuple(slot);
+	}
 
 	/* Remove error callback. */
 	error_context_stack = errcallback.previous;
@@ -304,13 +313,9 @@ pglogReScanForeignScan(ForeignScanState *node)
 	PgLogExecutionState *festate = (PgLogExecutionState *) node->fdw_state;
 	elog(DEBUG1,"Entering function %s",__func__);
 
-	EndCopyFrom(festate->cstate);
-
-	festate->cstate = BeginCopyFrom(node->ss.ss_currentRelation,
-									festate->filenames[0],
-									false,
-									NIL,
-									NIL);
+	/* Restart reading from the beginning (first file) */
+	festate->i = 0;
+	BeginNextCopy(node->ss.ss_currentRelation, festate);
 }
 
 /*
