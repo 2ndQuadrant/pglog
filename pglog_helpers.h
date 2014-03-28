@@ -62,7 +62,7 @@ void estimate_size(PlannerInfo *root, RelOptInfo *baserel,
 void estimate_costs(PlannerInfo *root, RelOptInfo *baserel,
 			   PgLogPlanState *fdw_private,
 			   Cost *startup_cost, Cost *total_cost);
-char **initLogFileNames(void);
+char **initLogFileNames(const char *path);
 
 void BeginNextCopy(Relation rel, PgLogExecutionState* state);
 bool isLastLogFile(PgLogExecutionState* state);

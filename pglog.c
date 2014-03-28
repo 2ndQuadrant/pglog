@@ -14,6 +14,7 @@
 #include "postgres.h"
 
 #include "pglog_helpers.h"
+#include "pglog_spool.h"
 
 #include "access/sysattr.h"
 #include "catalog/pg_foreign_table.h"
@@ -24,9 +25,10 @@
 #include "foreign/foreign.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
+#include "postmaster/syslogger.h"
+#include "utils/guc.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
-#include "postmaster/syslogger.h"
 
 PG_MODULE_MAGIC;
 
@@ -36,6 +38,13 @@ PG_MODULE_MAGIC;
 extern Datum pglog_handler(PG_FUNCTION_ARGS);
 
 PG_FUNCTION_INFO_V1(pglog_handler);
+
+/*
+ * Module load and unload functions
+ */
+
+void _PG_init(void);
+void _PG_fini(void);
 
 /*
  * FDW callback routines
@@ -69,11 +78,11 @@ pglog_handler(PG_FUNCTION_ARGS)
 	elog(DEBUG1,"Entering function %s",__func__);
 
 	/* Check if logging_collector is on and CSV is enabled */
-	if (! Logging_collector || !strstr(Log_destination_string, "csvlog"))
+	if (! Pglog_directory || strlen(Pglog_directory) == 0 || ! Pglog_spooling_enabled)
 		ereport(ERROR,
 			(errcode(ERRCODE_FDW_INVALID_HANDLE),
 			errmsg("Cannot instantiate the 'pglog' extension handler"),
-			errhint("'pgxlog' requires you to set 'log_collector = on' and to add 'csvlog' to 'log_destination'")
+			errhint("'pglog' requires you to set 'pglog.directory' to the path of a writable directory")
 		));
 
 
@@ -108,7 +117,7 @@ pglogGetForeignRelSize(PlannerInfo *root,
 	 */
 	fdw_private = (PgLogPlanState *) palloc(sizeof(PgLogPlanState));
 	fdw_private->i = 0;
-	fdw_private->filenames = initLogFileNames();
+	fdw_private->filenames = initLogFileNames(Pglog_directory);
 	baserel->fdw_private = (void *) fdw_private;
 
 	/* Estimate relation size */
@@ -220,7 +229,7 @@ pglogBeginForeignScan(ForeignScanState *node, int eflags)
 
 	/* Initialise the execution state */
 	festate = (PgLogExecutionState *) palloc(sizeof(PgLogExecutionState));
-	festate->filenames = initLogFileNames();
+	festate->filenames = initLogFileNames(Pglog_directory);
 	festate->i = 0;
 
 	/* Forces CSV format */
@@ -331,4 +340,24 @@ pglogEndForeignScan(ForeignScanState *node)
 	/* if festate is NULL, we are in EXPLAIN; nothing to do */
 	if (festate)
 		EndCopyFrom(festate->cstate);
+}
+
+/*
+ * Module Load Callback
+ */
+void
+_PG_init(void)
+{
+	pglog_spool_init();
+
+	EmitWarningsOnPlaceholders("pglog");
+}
+
+/*
+ * Module Unload Callback
+ */
+void
+_PG_fini(void)
+{
+	pglog_spool_fini();
 }

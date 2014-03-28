@@ -3,9 +3,7 @@
 == Requirements
 
 * PostgreSQL 9.3
-* `csvlog` in `log_destination`
-* `logging_collector = on`
-
+* `pglog` in `shared_preload_libraries`
 
 == Overview
 
@@ -47,22 +45,36 @@ CREATE FOREIGN TABLE log
 
 ----
 
-The extension will map a foreign table, named `log`, to all the
-CSV files contained in the `log_directory` (having `.csv` extension)
+The extension will spool system events in a spooling directory
+specified by `pglog.directory` parameter (default `pglog_spool` under
+`$PGDATA`) and make them available through a foreign table, named
+`log`
 
 == Initial limitations
 
-* Support for CSV log
-* Support for up to 16 log files (it could be made higher or set on an option)
-* No support for ordering of log files (currently files are read as they are from `log_directory` with no particular order)
-* No support for severity level data type (allows WHERE error_severity >= 'INFO')
-* No support for compressed files
+* No spool file rotation. A spool file is opened at server start and
+  retained forever.
+* No support for reliable event spooling in a high concurrent
+  environment (currently it simply append the events to the spool
+  file). In future it can be implemented using a dedicated process
+  that gather the events and append them to the spool file.
+* Support for up to 16 spool files (it could be made higher or set on
+  an option)
+* No support for ordering of log files (currently files are read as
+  they are from `pglog.directory` with the order returned by the
+  filesystem)
+* No support for severity level data type (allows WHERE error_severity
+  >= 'INFO')
 * No support for condition push down in WHERE queries
 * No support for ANALYSE
 * No support for date partitioning
-* No support for security (full control for superusers, limited to normal users
-footnote:[User control can be limited to string matching or current roles in the database server])
-* No support for current database only (so that pglog can be installed on every database and allow to view only messages for that database)
+
+* No support for security (full control for superusers, limited to
+normal users
+footnote:[User control can be limited to string matching or current
+roles in the database server])
+* No support for current database only (so that `pglog` can be installed
+  on every database and allow to view only messages for that database)
 
 == Links
 

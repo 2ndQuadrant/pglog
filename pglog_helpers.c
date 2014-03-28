@@ -247,7 +247,7 @@ estimate_costs(PlannerInfo *root, RelOptInfo *baserel,
  * Results are returned as a char** value, dynamically created by the function
  */
 char **
-initLogFileNames(void)
+initLogFileNames(const char *path)
 {
 	char **filenames;
 	char *filename;
@@ -262,24 +262,24 @@ initLogFileNames(void)
 	for (i = 0; i < MAX_LOG_FILES; ++i)
 		filenames[i] = 0;
 
-	elog(DEBUG1,"Log directory: %s - filename: %s", Log_directory, Log_filename);
+	elog(DEBUG1,"Spool directory: %s", path);
 
 	/* Open log directory */
-	dir = AllocateDir(Log_directory);
-	dir_length = strlen(Log_directory) + 1; /* consider slash too */
+	dir = AllocateDir(path);
+	dir_length = strlen(path) + 1; /* consider slash too */
 	i = 0;
-	while ((de = ReadDir(dir, Log_directory)) != NULL)
+	while ((de = ReadDir(dir, path)) != NULL)
 	{
 		elog(DEBUG1,"Found directory entry: %s", de->d_name);
-		/* Look for CSV files */
+		/* Look for dat files */
 		length = strlen(de->d_name);
-		if (length > 4 && (strcmp(de->d_name + (length - 4), ".csv") == 0))
+		if (length > 4 && (strcmp(de->d_name + (length - 4), ".dat") == 0))
 		{
-			elog(DEBUG1,"Found CSV log file: %s", de->d_name);
+			elog(DEBUG1,"Found DAT log file: %s", de->d_name);
 			/* Allocate the file name */
 			length += dir_length + 1;
 			filename = (char *) palloc(length * sizeof(char));
-			snprintf (filename, length, "%s/%s", Log_directory, de->d_name);
+			snprintf (filename, length, "%s/%s", path, de->d_name);
 			/* Insert the file in the final array */
 			filenames[i++] = filename;
 		}

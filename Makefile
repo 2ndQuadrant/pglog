@@ -1,7 +1,7 @@
 # pglog/Makefile
 
 MODULE_big = pglog
-OBJS = pglog_helpers.o pglog.o
+OBJS = pglog_helpers.o pglog.o pglog_spool.o
 
 EXTENSION = pglog
 DATA = pglog--1.0.sql
