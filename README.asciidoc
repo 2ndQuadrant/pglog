@@ -3,20 +3,51 @@
 == Requirements
 
 * PostgreSQL 9.3
-* `pglog` in `shared_preload_libraries`
 
-== Overview
+== Installation
 
+
+* Add `pglog` in `shared_preload_libraries` in `postgresql.conf`
++
+----
+shared_preload_libraries = 'pglog'
+----
+
+* Install the `pglog` extension in a database, using the following command:
++
 ----
 CREATE EXTENSION pglog;
 ----
 
+== Overview
+
+The `pglog` extension will log system events in a spooling directory
+specified by `pglog.directory` parameter (by default `pglog_spool` under
+`$PGDATA`).
+
+The `pglog` extension allows users to access events via SQL through
+the `pglog` foreign table. The extension must be installed on any database
+for which you want to make this feature available.
+
 The extension is responsible for:
 
 ----
-CREATE SERVER pglog_server FOREIGN DATA WRAPPER pglog NO VALIDATOR;
+CREATE SERVER pglog_server
+  FOREIGN DATA WRAPPER pglog;
 
-CREATE FOREIGN TABLE log
+CREATE TYPE pglog_severity AS ENUM (
+	'DEBUG',
+	'LOG',
+	'INFO',
+	'NOTICE',
+	'WARNING',
+	'ERROR',
+	'FATAL',
+	'PANIC',
+	'???'
+);
+
+CREATE FOREIGN TABLE pglog
 (
   log_time timestamp(3) with time zone,
   user_name text,
@@ -29,7 +60,7 @@ CREATE FOREIGN TABLE log
   session_start_time timestamp with time zone,
   virtual_transaction_id text,
   transaction_id bigint,
-  error_severity text,
+  error_severity pglog_severity,
   sql_state_code text,
   message text,
   detail text,
@@ -42,13 +73,7 @@ CREATE FOREIGN TABLE log
   location text,
   application_name text
 ) SERVER pglog_server;
-
 ----
-
-The extension will spool system events in a spooling directory
-specified by `pglog.directory` parameter (default `pglog_spool` under
-`$PGDATA`) and make them available through a foreign table, named
-`log`
 
 == Initial limitations
 
@@ -63,8 +88,6 @@ specified by `pglog.directory` parameter (default `pglog_spool` under
 * No support for ordering of log files (currently files are read as
   they are from `pglog.directory` with the order returned by the
   filesystem)
-* No support for severity level data type (allows WHERE error_severity
-  >= 'INFO')
 * No support for condition push down in WHERE queries
 * No support for ANALYSE
 * No support for date partitioning

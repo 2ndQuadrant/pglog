@@ -15,7 +15,19 @@ CREATE FOREIGN DATA WRAPPER pglog
 CREATE SERVER pglog_server
   FOREIGN DATA WRAPPER pglog;
 
-CREATE FOREIGN TABLE log
+CREATE TYPE pglog_severity AS ENUM (
+	'DEBUG',
+	'LOG',
+	'INFO',
+	'NOTICE',
+	'WARNING',
+	'ERROR',
+	'FATAL',
+	'PANIC',
+	'???'
+);
+
+CREATE FOREIGN TABLE pglog
 (
   log_time timestamp(3) with time zone,
   user_name text,
@@ -28,7 +40,7 @@ CREATE FOREIGN TABLE log
   session_start_time timestamp with time zone,
   virtual_transaction_id text,
   transaction_id bigint,
-  error_severity text,
+  error_severity pglog_severity,
   sql_state_code text,
   message text,
   detail text,

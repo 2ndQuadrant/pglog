@@ -260,29 +260,29 @@ error_severity(int elevel)
 		case DEBUG3:
 		case DEBUG4:
 		case DEBUG5:
-			prefix = _("DEBUG");
+			prefix = "DEBUG";
 			break;
 		case LOG:
 		case COMMERROR:
-			prefix = _("LOG");
+			prefix = "LOG";
 			break;
 		case INFO:
-			prefix = _("INFO");
+			prefix = "INFO";
 			break;
 		case NOTICE:
-			prefix = _("NOTICE");
+			prefix = "NOTICE";
 			break;
 		case WARNING:
-			prefix = _("WARNING");
+			prefix = "WARNING";
 			break;
 		case ERROR:
-			prefix = _("ERROR");
+			prefix = "ERROR";
 			break;
 		case FATAL:
-			prefix = _("FATAL");
+			prefix = "FATAL";
 			break;
 		case PANIC:
-			prefix = _("PANIC");
+			prefix = "PANIC";
 			break;
 		default:
 			prefix = "???";
