@@ -30,7 +30,8 @@
 
 
 /* GUC Variables */
-char *Pglog_directory = NULL;
+char   *Pglog_directory = NULL;
+int		Pglog_min_messages = WARNING;
 
 /* Is event spooling working? */
 bool Pglog_spooling_enabled = true;
@@ -52,7 +53,7 @@ static char formatted_start_time[FORMATTED_TS_LEN];
 static char formatted_log_time[FORMATTED_TS_LEN];
 
 /* Internal functions */
-static char *getSpolfileName(const char *path, pg_time_t timestamp);
+static char *getSpoolfileName(const char *path, pg_time_t timestamp);
 static void openSpoolfile(const char *path);
 static void rotateSpoolfile(const char *path);
 static void setup_formatted_log_time(void);
@@ -77,12 +78,32 @@ static bool guc_check_directory(char **newval, void **extra, GucSource source);
 #endif
 
 /*
+ * Enum definition for pglog.min_messages
+ */
+static const struct config_enum_entry server_message_level_options[] = {
+	{"debug", DEBUG2, true},
+	{"debug5", DEBUG5, false},
+	{"debug4", DEBUG4, false},
+	{"debug3", DEBUG3, false},
+	{"debug2", DEBUG2, false},
+	{"debug1", DEBUG1, false},
+	{"info", INFO, false},
+	{"notice", NOTICE, false},
+	{"warning", WARNING, false},
+	{"error", ERROR, false},
+	{"log", LOG, false},
+	{"fatal", FATAL, false},
+	{"panic", PANIC, false},
+	{NULL, 0, false}
+};
+
+/*
  * construct logfile name using timestamp information
  *
  * Result is palloc'd.
  */
 static char *
-getSpolfileName(const char *path, pg_time_t timestamp)
+getSpoolfileName(const char *path, pg_time_t timestamp)
 {
 	char	   *filename;
 	int			len;
@@ -112,7 +133,7 @@ openSpoolfile(const char *path)
 	FILE		*fh		   = NULL;
 	mode_t		oumask;
 
-	filename = getSpolfileName(path, time(NULL));
+	filename = getSpoolfileName(path, time(NULL));
 
 	/*
 	 * Create spool directory if not present; ignore errors
@@ -525,6 +546,12 @@ pglog_emit_log_hook(ErrorData *edata)
 		goto quickExit;
 	}
 
+	/*
+	 * Check if the log has to be written, if not just exit.
+	 */
+	if (! is_log_level_output(edata->elevel, Pglog_min_messages))
+		goto quickExit;
+
 	save_errno = errno;
 
 	/*
@@ -608,6 +635,19 @@ pglog_spool_init(void)
 							   guc_check_directory,
 							   guc_assign_directory,
 							   NULL);
+
+	DefineCustomEnumVariable("pglog.min_messages",
+							 "Sets the message levels that are logged.",
+							 "Each level includes all the levels that follow it. The later"
+							 " the level, the fewer messages are sent.",
+							 &Pglog_min_messages,
+							 WARNING,
+							 server_message_level_options,
+							 PGC_SUSET,
+							 GUC_NOT_IN_SAMPLE | GUC_SUPERUSER_ONLY,
+							 NULL,
+							 NULL,
+							 NULL);
 
 	/* Install hook */
 	prev_emit_log_hook = emit_log_hook;

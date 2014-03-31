@@ -17,11 +17,11 @@ CREATE SERVER pglog_server
 
 CREATE TYPE pglog_severity AS ENUM (
 	'DEBUG',
-	'LOG',
 	'INFO',
 	'NOTICE',
 	'WARNING',
 	'ERROR',
+	'LOG',
 	'FATAL',
 	'PANIC',
 	'???'
