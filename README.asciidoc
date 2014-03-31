@@ -19,11 +19,42 @@ shared_preload_libraries = 'pglog'
 CREATE EXTENSION pglog;
 ----
 
+== Configuration options
+
+pglog.directory::
+Where log data files will be spooled by the PostgreSQL server 
+(by default `pglog_spool` under `$PGDATA`).
++
+.Example
+----
+pglog.directory = '/var/log/postgres/pglog'
+----
+
+pglog.min_messages::
+Sets the message levels that are logged.
+Each level includes all the levels that follow it.
+The later  the level, the fewer messages are sent. Default 'WARNING'.
+Possible values: 'DEBUG', 'INFO', 'NOTICE', 'WARNING', 'ERROR',
+'LOG', 'FATAL', 'PANIC'.
++
+.Example
+----
+pglog.min_messages = 'ERROR'
+----
+
+pglog.rotation_age::
+Automatic spool file rotation will occur after N minutes. Default 1 day.
+0 disables automatic rotation.
++
+.Example
+----
+pglog.rotation_age = '1d'
+----
+
 == Overview
 
 The `pglog` extension will log system events in a spooling directory
-specified by `pglog.directory` parameter (by default `pglog_spool` under
-`$PGDATA`).
+specified by `pglog.directory` parameter.
 
 The `pglog` extension allows users to access events via SQL through
 the `pglog` foreign table. The extension must be installed on any database
@@ -37,11 +68,11 @@ CREATE SERVER pglog_server
 
 CREATE TYPE pglog_severity AS ENUM (
 	'DEBUG',
-	'LOG',
 	'INFO',
 	'NOTICE',
 	'WARNING',
 	'ERROR',
+	'LOG',
 	'FATAL',
 	'PANIC',
 	'???'
@@ -77,12 +108,12 @@ CREATE FOREIGN TABLE pglog
 
 == Initial limitations
 
-* No spool file rotation. A spool file is opened at server start and
-  retained forever.
+* Limited spool file rotation. A spool file is written in the appropriate
+  file name but no file is yet automatically deleted.
 * No support for reliable event spooling in a high concurrent
-  environment (currently it simply append the events to the spool
-  file). In future it can be implemented using a dedicated process
-  that gather the events and append them to the spool file.
+  environment (currently it simply appends the events to the spool
+  file). In the future it can be implemented using a dedicated process
+  that gathers the events and append them to the spool file.
 * Support for up to 16 spool files (it could be made higher or set on
   an option)
 * No support for ordering of log files (currently files are read as
@@ -91,9 +122,8 @@ CREATE FOREIGN TABLE pglog
 * No support for condition push down in WHERE queries
 * No support for ANALYSE
 * No support for date partitioning
-
 * No support for security (full control for superusers, limited to
-normal users
+  normal users
 footnote:[User control can be limited to string matching or current
 roles in the database server])
 * No support for current database only (so that `pglog` can be installed
