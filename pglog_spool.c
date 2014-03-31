@@ -44,6 +44,8 @@ static emit_log_hook_type prev_emit_log_hook = NULL;
 
 /* Current spool file */
 static FILE *currentSpoolfile = NULL;
+static char *currentSpoolfileName = NULL;
+static bool spoolfileRotationRequired = false;
 
 /*
  * buffers for formatted timestamps
@@ -185,6 +187,11 @@ rotateSpoolfile(const char *path)
 	/* Close old file and free its name */
 	if (currentSpoolfile) {
 		fclose(currentSpoolfile);
+		currentSpoolfile = NULL;
+	}
+	if (currentSpoolfileName) {
+		pfree(currentSpoolfileName);
+		currentSpoolfileName = NULL;
 	}
 
 	/* Enable spooling again */
@@ -560,9 +567,9 @@ pglog_emit_log_hook(ErrorData *edata)
 	 */
 	initStringInfo(&buf);
 
-	if (currentSpoolfile == NULL)
+	if (currentSpoolfile == NULL || spoolfileRotationRequired)
 	{
-		openSpoolfile(Pglog_directory);
+		rotateSpoolfile(Pglog_directory);
 
 		/* Couldn't open the destination file; give up */
 		if (currentSpoolfile == NULL)
@@ -584,9 +591,10 @@ pglog_emit_log_hook(ErrorData *edata)
 		 * We need to disable spooling to emit an error message here.
 		 */
 		Pglog_spooling_enabled = false;
-		/*
-		 * TODO: emit some error message
-		 */
+		ereport(LOG,
+				(errcode_for_file_access(),
+				 errmsg("could not write log file \"%s\": %m",
+						currentSpoolfileName)));
 	}
 
 	goto exit;
@@ -604,7 +612,7 @@ quickExit:
 static void
 guc_assign_directory(const char *newval, void *extra)
 {
-	rotateSpoolfile(newval);
+	spoolfileRotationRequired = true;
 }
 
 static bool
