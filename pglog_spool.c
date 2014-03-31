@@ -32,6 +32,7 @@
 /* GUC Variables */
 char   *Pglog_directory = NULL;
 int		Pglog_min_messages = WARNING;
+int		Pglog_RotationAge = HOURS_PER_DAY * MINS_PER_HOUR;
 
 /* Is event spooling working? */
 bool Pglog_spooling_enabled = true;
@@ -42,10 +43,11 @@ static void pglog_emit_log_hook(ErrorData *edata);
 /* Old hook storage for loading/unloading of the extension */
 static emit_log_hook_type prev_emit_log_hook = NULL;
 
-/* Current spool file */
-static FILE *currentSpoolfile = NULL;
-static char *currentSpoolfileName = NULL;
-static bool spoolfileRotationRequired = false;
+/* Private state */
+static FILE *current_spoolfile = NULL;
+static char *current_spoolfile_name = NULL;
+static bool rotation_requested = false;
+static pg_time_t next_rotation_time;
 
 /*
  * buffers for formatted timestamps
@@ -55,9 +57,10 @@ static char formatted_start_time[FORMATTED_TS_LEN];
 static char formatted_log_time[FORMATTED_TS_LEN];
 
 /* Internal functions */
-static char *getSpoolfileName(const char *path, pg_time_t timestamp);
-static void openSpoolfile(const char *path);
-static void rotateSpoolfile(const char *path);
+static char *get_spoolfile_name(const char *path, pg_time_t timestamp);
+static void set_next_rotation_time(void);
+static void open_spoolfile(const char *path, pg_time_t timestamp);
+static void rotate_spoolfile(const char *path);
 static void setup_formatted_log_time(void);
 static void setup_formatted_start_time(void);
 static inline void appendCSVLiteral(StringInfo buf, const char *data);
@@ -67,6 +70,7 @@ static void fmtLogLine(StringInfo buf, ErrorData *edata);
 static void pglog_emit_log_hook(ErrorData *edata);
 static void guc_assign_directory(const char *newval, void *extra);
 static bool guc_check_directory(char **newval, void **extra, GucSource source);
+static void guc_assign_rotation_age(int newval, void *extra);
 
 /*
  * We really want line-buffered mode for logfile output, but Windows does
@@ -105,7 +109,7 @@ static const struct config_enum_entry server_message_level_options[] = {
  * Result is palloc'd.
  */
 static char *
-getSpoolfileName(const char *path, pg_time_t timestamp)
+get_spoolfile_name(const char *path, pg_time_t timestamp)
 {
 	char	   *filename;
 	int			len;
@@ -123,19 +127,48 @@ getSpoolfileName(const char *path, pg_time_t timestamp)
 	return filename;
 }
 
+/*
+ * Determine the next planned rotation time, and store in next_rotation_time.
+ */
+static void
+set_next_rotation_time(void)
+{
+	pg_time_t	now;
+	struct pg_tm *tm;
+	int			rotinterval;
+
+	/* nothing to do if time-based rotation is disabled */
+	if (Pglog_RotationAge <= 0)
+		return;
+
+	/*
+	 * The requirements here are to choose the next time > now that is a
+	 * "multiple" of the log rotation interval.  "Multiple" can be interpreted
+	 * fairly loosely.	In this version we align to log_timezone rather than
+	 * GMT.
+	 */
+	rotinterval = Pglog_RotationAge * SECS_PER_MINUTE;	/* convert to seconds */
+	now = (pg_time_t) time(NULL);
+	tm = pg_localtime(&now, log_timezone);
+	now += tm->tm_gmtoff;
+	now -= now % rotinterval;
+	now += rotinterval;
+	now -= tm->tm_gmtoff;
+	next_rotation_time = now;
+}
 
 /*
  * Open the log spool file
  */
 static void
-openSpoolfile(const char *path)
+open_spoolfile(const char *path, pg_time_t timestamp)
 {
 	const int	save_errno = errno;
 	char        *filename  = NULL;
 	FILE		*fh		   = NULL;
 	mode_t		oumask;
 
-	filename = getSpoolfileName(path, time(NULL));
+	filename = get_spoolfile_name(path, timestamp);
 
 	/*
 	 * Create spool directory if not present; ignore errors
@@ -159,7 +192,7 @@ openSpoolfile(const char *path)
 		_setmode(_fileno(fh), _O_TEXT);
 #endif
 
-		currentSpoolfile = fh;
+		current_spoolfile = fh;
 	}
 	else
 	{
@@ -182,23 +215,27 @@ openSpoolfile(const char *path)
  * Close the current file (if any) and open a new one
  */
 static void
-rotateSpoolfile(const char *path)
+rotate_spoolfile(const char *path)
 {
 	/* Close old file and free its name */
-	if (currentSpoolfile) {
-		fclose(currentSpoolfile);
-		currentSpoolfile = NULL;
+	if (current_spoolfile) {
+		fclose(current_spoolfile);
+		current_spoolfile = NULL;
 	}
-	if (currentSpoolfileName) {
-		pfree(currentSpoolfileName);
-		currentSpoolfileName = NULL;
+	if (current_spoolfile_name) {
+		pfree(current_spoolfile_name);
+		current_spoolfile_name = NULL;
 	}
 
 	/* Enable spooling again */
 	Pglog_spooling_enabled=true;
 
+	/* set next planned rotation time */
+	set_next_rotation_time();
+
 	/* Open a new log file */
-	openSpoolfile(path);
+	open_spoolfile(path, next_rotation_time - Pglog_RotationAge * SECS_PER_MINUTE);
+
 }
 
 /*
@@ -546,9 +583,8 @@ pglog_emit_log_hook(ErrorData *edata)
 		 * Unsetting the GUCs via SIGHUP would leave a dangling file
 		 * descriptor, if it exists, close it.
 		 */
-		if (currentSpoolfile) {
-			fclose(currentSpoolfile);
-		}
+		if (current_spoolfile)
+			fclose(current_spoolfile);
 
 		goto quickExit;
 	}
@@ -559,6 +595,11 @@ pglog_emit_log_hook(ErrorData *edata)
 	if (! is_log_level_output(edata->elevel, Pglog_min_messages))
 		goto quickExit;
 
+	/* Do a logfile rotation if it's time */
+	if ((pg_time_t) time(NULL) >= next_rotation_time) {
+		rotation_requested = true;
+	}
+
 	save_errno = errno;
 
 	/*
@@ -567,12 +608,12 @@ pglog_emit_log_hook(ErrorData *edata)
 	 */
 	initStringInfo(&buf);
 
-	if (currentSpoolfile == NULL || spoolfileRotationRequired)
+	if (current_spoolfile == NULL || rotation_requested)
 	{
-		rotateSpoolfile(Pglog_directory);
+		rotate_spoolfile(Pglog_directory);
 
 		/* Couldn't open the destination file; give up */
-		if (currentSpoolfile == NULL)
+		if (current_spoolfile == NULL)
 			goto exit;
 	}
 
@@ -582,8 +623,8 @@ pglog_emit_log_hook(ErrorData *edata)
 	/* write the log line
 	 * TODO: this is not safe for concurrency
 	 */
-	fseek(currentSpoolfile, 0L, SEEK_END);
-	rc = fwrite(buf.data, 1, buf.len, currentSpoolfile);
+	fseek(current_spoolfile, 0L, SEEK_END);
+	rc = fwrite(buf.data, 1, buf.len, current_spoolfile);
 
 	/* can't use ereport here because of possible recursion */
 	if (rc != buf.len) {
@@ -594,7 +635,7 @@ pglog_emit_log_hook(ErrorData *edata)
 		ereport(LOG,
 				(errcode_for_file_access(),
 				 errmsg("could not write log file \"%s\": %m",
-						currentSpoolfileName)));
+						current_spoolfile_name)));
 	}
 
 	goto exit;
@@ -612,7 +653,9 @@ quickExit:
 static void
 guc_assign_directory(const char *newval, void *extra)
 {
-	spoolfileRotationRequired = true;
+	/* Force a rotation, but only if there is an open file */
+	if (current_spoolfile)
+		rotation_requested = true;
 }
 
 static bool
@@ -624,6 +667,12 @@ guc_check_directory(char **newval, void **extra, GucSource source)
 	 */
 	canonicalize_path(*newval);
 	return true;
+}
+
+static void
+guc_assign_rotation_age(int newval, void *extra)
+{
+	set_next_rotation_time();
 }
 
 /*
@@ -652,10 +701,26 @@ pglog_spool_init(void)
 							 WARNING,
 							 server_message_level_options,
 							 PGC_SUSET,
-							 GUC_NOT_IN_SAMPLE | GUC_SUPERUSER_ONLY,
+							 GUC_NOT_IN_SAMPLE,
 							 NULL,
 							 NULL,
 							 NULL);
+
+	DefineCustomIntVariable("pglog.rotation_age",
+							"Automatic spool file rotation will occur after N minutes.",
+							NULL,
+							&Pglog_RotationAge,
+							HOURS_PER_DAY * MINS_PER_HOUR,
+							0,
+							INT_MAX / SECS_PER_MINUTE,
+							PGC_SIGHUP,
+							GUC_NOT_IN_SAMPLE | GUC_UNIT_MIN,
+							NULL,
+							guc_assign_rotation_age,
+							NULL);
+
+	/* Make sure next_rotation_time is set to a sane value */
+	set_next_rotation_time();
 
 	/* Install hook */
 	prev_emit_log_hook = emit_log_hook;
